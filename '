@@ -27,12 +27,6 @@ fn display_card(card: &Card) -> String {
     }
 }
 
-fn image_name(card: &Card) -> String {
-    let suit = card.0.clone();
-    let card = card.1.as_str();
-    format!("kenney_boardgame-pack/PNG/Cards/card{}{}.png", suit, card).to_string()
-}
-
 fn value_face_reverse_map() -> HashMap<u8, String> {
     let faces = vec![
         "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A",
@@ -78,25 +72,6 @@ fn face_cards() -> impl Iterator<Item = Card> {
 #[derive(Component, Default)]
 struct PlayerNum(u8);
 
-impl PartialEq for PlayerNum {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl PartialOrd for PlayerNum {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for PlayerNum {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.cmp(&other.0)
-    }
-}
-impl Eq for PlayerNum {}
-
 #[derive(Component, Debug, Clone)]
 #[require(PlayerNum)]
 struct Player {
@@ -127,30 +102,27 @@ fn init_players(mut commands: Commands) {
     let num_players = 2;
     let mut players = Vec::new();
     for player in 0..num_players {
-        players.push(Player { cards: Vec::new() });
+        players.push((Player { cards: Vec::new() }, PlayerNum(player)));
     }
 
-    distribute_cards(&mut players, initial_cards());
+    distribute_cards(
+        &mut players
+            .iter_mut()
+            .map(|x| x.0
+            .collect::<Vec<Player>>(),
+        initial_cards(),
+    );
 
-    for (player_num, player) in players.into_iter().enumerate() {
-        commands.spawn((player, PlayerNum(player_num as u8)));
+    for player in players {
+        commands.spawn(player);
     }
 }
 
 #[derive(Component)]
-#[require(PlayerNum)]
 struct PlayerArea;
-
 #[derive(Component)]
-#[require(PlayerNum)]
-struct PlayerCardNum;
-
-#[derive(Component)]
-#[require(ImageNode)]
 struct DeckArea;
-
 #[derive(Component)]
-#[require(ImageNode)]
 struct CurrentCardArea;
 
 fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -174,32 +146,32 @@ fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             // Top Player (Player 2)
             spawn_player_ui(
                 parent,
+                String::from("Player 2"),
                 font.clone(),
                 image.clone(),
                 asset_server.load("kenney_boardgame-pack/PNG/Cards/cardBack_blue5.png"),
                 FlexDirection::RowReverse,
-                PlayerNum(2),
             );
 
             // Bottom Player (Player 1)
             spawn_player_ui(
                 parent,
+                String::from("Player 1"),
                 font,
                 image,
                 asset_server.load("kenney_boardgame-pack/PNG/Cards/cardBack_green5.png"),
                 FlexDirection::Row,
-                PlayerNum(1),
             );
         });
 }
 
 fn spawn_player_ui(
     parent: &mut ChildBuilder,
+    name: String,
     font: Handle<Font>,
     image: Handle<Image>,
     back_image: Handle<Image>,
     flex_direction: FlexDirection,
-    player_num: PlayerNum,
 ) {
     parent
         .spawn((Node {
@@ -241,23 +213,24 @@ fn spawn_player_ui(
             ));
 
             // Player Label
-            player_area
-                .spawn((Node {
-                    width: Val::Px(140.),
-                    height: Val::Px(190.),
-                    flex_direction: FlexDirection::Column,
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },))
-                .with_children(|text_area| {
-                    text_area.spawn((
-                        Text(format!(
-                            "Player {}",
-                            match player_num {
-                                PlayerNum(num) => format!("{}", num),
-                            }
-                        )),
+            player_area.spawn(()).with_children(|text_area| {
+                text_area.spawn((
+                    Text(name),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 20.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                    Node {
+                        margin: UiRect::all(Val::Px(10.)),
+                        ..default()
+                    },
+                ));
+
+                text_area
+                    .spawn((
+                        Text(String::from("Cards Left: ")),
                         TextFont {
                             font: font.clone(),
                             font_size: 20.0,
@@ -268,11 +241,10 @@ fn spawn_player_ui(
                             margin: UiRect::all(Val::Px(10.)),
                             ..default()
                         },
-                    ));
-
-                    text_area
-                        .spawn((
-                            Text(String::from("Cards: ")),
+                    ))
+                    .with_children(|text| {
+                        text.spawn((
+                            TextSpan::default(),
                             TextFont {
                                 font: font.clone(),
                                 font_size: 20.0,
@@ -281,72 +253,17 @@ fn spawn_player_ui(
                             TextColor(Color::WHITE),
                             Node {
                                 margin: UiRect::all(Val::Px(10.)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
                                 ..default()
                             },
-                        ))
-                        .with_children(|text| {
-                            text.spawn((
-                                TextSpan(String::from("?")),
-                                TextFont {
-                                    font: font.clone(),
-                                    font_size: 20.0,
-                                    ..default()
-                                },
-                                TextColor(Color::WHITE),
-                                PlayerCardNum,
-                                player_num,
-                            ));
-                        });
-                });
+                        ));
+                    });
+            });
         });
-}
-
-fn update_card_count(
-    player: Query<(&Player, &PlayerNum)>,
-    mut player_text: Query<(&mut TextSpan, &PlayerNum), With<PlayerCardNum>>,
-) {
-    for player in player
-        .iter()
-        .sort::<&PlayerNum>()
-        .zip(player_text.iter_mut().sort::<&PlayerNum>())
-    {
-        let (player, text) = player;
-        let (player, _) = player;
-        let (mut text, _) = text;
-
-        *text = TextSpan(format!("{}", player.cards.len()));
-    }
-}
-
-fn current_card(
-    player: Query<(&Player, &PlayerNum)>,
-    mut card_image: Query<(&mut ImageNode, &PlayerNum), With<CurrentCardArea>>,
-    asset_server: Res<AssetServer>,
-) {
-    for player in player
-        .iter()
-        .sort::<&PlayerNum>()
-        .zip(card_image.iter_mut().sort::<&PlayerNum>())
-    {
-        let (player, image) = player;
-        let (player, _) = player;
-        let (mut image, _) = image;
-        if let Some(card) = player.cards.first() {
-            println!("{}", image_name(card));
-            *image = ImageNode {
-                image: asset_server.load(image_name(card)),
-                ..default()
-            }
-        }
-    }
 }
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_systems(Startup, (init_players, setup_ui))
-        .add_systems(Update, (update_card_count, current_card))
         .run();
 }

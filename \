@@ -320,25 +320,21 @@ fn update_card_count(
     }
 }
 
-fn current_card(
+fn play_next(
     player: Query<(&Player, &PlayerNum)>,
-    mut card_image: Query<(&mut ImageNode, &PlayerNum), With<CurrentCardArea>>,
+    mut player_text: Query<&mut ImageNode, With<CurrentCardArea>>,
     asset_server: Res<AssetServer>,
 ) {
     for player in player
         .iter()
         .sort::<&PlayerNum>()
-        .zip(card_image.iter_mut().sort::<&PlayerNum>())
+        .zip(player_text.iter_mut().sort::<&PlayerNum>())
     {
         let (player, image) = player;
         let (player, _) = player;
-        let (mut image, _) = image;
-        if let Some(card) = player.cards.first() {
-            println!("{}", image_name(card));
-            *image = ImageNode {
-                image: asset_server.load(image_name(card)),
-                ..default()
-            }
+
+        if let &Some(card) = player.cards[0] {
+            image.image = asset_server.load(image_name(card));
         }
     }
 }
@@ -347,6 +343,6 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_systems(Startup, (init_players, setup_ui))
-        .add_systems(Update, (update_card_count, current_card))
+        .add_systems(Update, (update_card_count, play_next))
         .run();
 }
