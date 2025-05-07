@@ -1,4 +1,4 @@
-use bevy::{prelude::*, render::render_resource::Texture, utils::HashMap};
+use bevy::{platform::collections::HashMap, prelude::*};
 use itertools::Itertools;
 use rand::prelude::*;
 
@@ -75,7 +75,7 @@ fn face_cards() -> impl Iterator<Item = Card> {
     })
 }
 
-#[derive(Component, Default)]
+#[derive(Component, Default, Clone)]
 struct PlayerNum(u8);
 
 impl PartialEq for PlayerNum {
@@ -111,17 +111,6 @@ fn initial_cards() -> Vec<Card> {
     cards
 }
 
-fn distribute_cards(players: &mut Vec<Player>, cards: Vec<Card>) {
-    for player in players.iter_mut() {
-        player.cards.clear();
-    }
-
-    for (i, card) in cards.into_iter().enumerate() {
-        let player_index = i % players.len();
-        players[player_index].cards.push(card);
-    }
-}
-
 fn init_players(mut commands: Commands) {
     // Maybe make this a resource
     let num_players = 2;
@@ -130,10 +119,40 @@ fn init_players(mut commands: Commands) {
         players.push(Player { cards: Vec::new() });
     }
 
-    distribute_cards(&mut players, initial_cards());
-
     for (player_num, player) in players.into_iter().enumerate() {
-        commands.spawn((player, PlayerNum(player_num as u8)));
+        commands.spawn((player, PlayerNum((player_num + 1) as u8)));
+    }
+}
+
+fn init_pot(mut commands: Commands) {
+    commands.spawn(Pot { cards: Vec::new() });
+}
+
+fn reset_players(mut players_query: Query<&mut Player>) {
+    let mut players = Vec::new();
+    for player in players_query.iter_mut() {
+        players.push(player);
+    }
+
+    for player in players.iter_mut() {
+        player.cards.clear();
+    }
+
+    for (i, card) in initial_cards().into_iter().enumerate() {
+        let player_index = i % players.len();
+        players[player_index].cards.push(card);
+    }
+}
+
+fn reset_pot(mut pot: Query<&mut Pot>) -> Result {
+    let mut pot = pot.single_mut()?;
+    pot.cards.clear();
+    Ok(())
+}
+
+fn reset_cards_in_play(mut cards: Query<&mut CardsInPlay>) {
+    for mut cards in cards.iter_mut() {
+        cards.cards.clear();
     }
 }
 
@@ -149,70 +168,102 @@ struct PlayerCardNum;
 #[require(ImageNode)]
 struct DeckArea;
 
-#[derive(Component)]
+#[derive(Component, Default)]
 #[require(ImageNode)]
 struct CurrentCardArea;
 
-fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn(Camera2dBundle::default());
+#[derive(Component)]
+#[require(CurrentCardArea, PlayerNum)]
+struct CardsInPlay {
+    cards: Vec<Card>,
+}
 
-    commands
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                height: Val::Percent(100.),
-                width: Val::Percent(100.),
-                justify_content: JustifyContent::SpaceBetween,
-                align_items: AlignItems::Stretch,
-                ..default()
-            },
-            BackgroundColor::from(Color::srgb(0.3, 0.3, 0.3)),
-        ))
-        .with_children(|parent| {
-            let font = asset_server.load("fonts/FiraMono-Medium.ttf");
-            let image = asset_server.load("kenney_boardgame-pack/PNG/Cards/cardSpadesA.png");
-            // Top Player (Player 2)
+#[derive(Component)]
+struct Pot {
+    cards: Vec<Card>,
+}
+
+#[derive(Component)]
+#[require(TextSpan)]
+struct StatusText;
+
+fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn(Camera2d);
+
+    let font = asset_server.load("fonts/FiraMono-Medium.ttf");
+    commands.spawn((
+        Node {
+            flex_direction: FlexDirection::Column,
+            height: Val::Percent(100.),
+            width: Val::Percent(100.),
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Stretch,
+            ..default()
+        },
+        BackgroundColor::from(Color::srgb(0.3, 0.3, 0.3)),
+        children![
             spawn_player_ui(
-                parent,
                 font.clone(),
-                image.clone(),
                 asset_server.load("kenney_boardgame-pack/PNG/Cards/cardBack_blue5.png"),
                 FlexDirection::RowReverse,
                 PlayerNum(2),
-            );
-
-            // Bottom Player (Player 1)
+            ),
+            (
+                Node {
+                    width: Val::Percent(100.),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                children![(
+                    Text(String::from("")),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 60.,
+                        ..Default::default()
+                    },
+                    TextColor(Color::WHITE),
+                    children![(
+                        StatusText,
+                        TextSpan(String::from("")),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: 60.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    )]
+                )]
+            ),
             spawn_player_ui(
-                parent,
                 font,
-                image,
                 asset_server.load("kenney_boardgame-pack/PNG/Cards/cardBack_green5.png"),
                 FlexDirection::Row,
                 PlayerNum(1),
-            );
-        });
+            )
+        ],
+    ));
 }
 
 fn spawn_player_ui(
-    parent: &mut ChildBuilder,
     font: Handle<Font>,
-    image: Handle<Image>,
     back_image: Handle<Image>,
     flex_direction: FlexDirection,
     player_num: PlayerNum,
-) {
-    parent
-        .spawn((Node {
+) -> impl Bundle {
+    (
+        // Play Area
+        Node {
             margin: UiRect::all(Val::Px(10.0)),
             flex_direction,
             column_gap: Val::Px(20.),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             ..default()
-        },))
-        .with_children(|player_area| {
-            // Deck
-            player_area.spawn((
+        },
+        children![
+            (
                 Node {
                     width: Val::Px(140.0),
                     height: Val::Px(190.0),
@@ -225,10 +276,9 @@ fn spawn_player_ui(
                     ..default()
                 },
                 DeckArea,
-            ));
-
-            // Current Card
-            player_area.spawn((
+                player_num.clone()
+            ),
+            (
                 Node {
                     width: Val::Px(140.),
                     height: Val::Px(190.),
@@ -236,22 +286,22 @@ fn spawn_player_ui(
                     align_items: AlignItems::Center,
                     ..default()
                 },
-                ImageNode { image, ..default() },
+                ImageNode { ..default() },
                 CurrentCardArea,
-            ));
-
-            // Player Label
-            player_area
-                .spawn((Node {
+                CardsInPlay { cards: Vec::new() },
+                player_num.clone()
+            ),
+            (
+                Node {
                     width: Val::Px(140.),
                     height: Val::Px(190.),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     ..default()
-                },))
-                .with_children(|text_area| {
-                    text_area.spawn((
+                },
+                children![
+                    (
                         Text(format!(
                             "Player {}",
                             match player_num {
@@ -268,39 +318,37 @@ fn spawn_player_ui(
                             margin: UiRect::all(Val::Px(10.)),
                             ..default()
                         },
-                    ));
-
-                    text_area
-                        .spawn((
-                            Text(String::from("Cards: ")),
+                    ),
+                    (
+                        Text(String::from("Cards: ")),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                        Node {
+                            margin: UiRect::all(Val::Px(10.)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        children![(
+                            TextSpan(String::from("?")),
                             TextFont {
                                 font: font.clone(),
                                 font_size: 20.0,
                                 ..default()
                             },
                             TextColor(Color::WHITE),
-                            Node {
-                                margin: UiRect::all(Val::Px(10.)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                        ))
-                        .with_children(|text| {
-                            text.spawn((
-                                TextSpan(String::from("?")),
-                                TextFont {
-                                    font: font.clone(),
-                                    font_size: 20.0,
-                                    ..default()
-                                },
-                                TextColor(Color::WHITE),
-                                PlayerCardNum,
-                                player_num,
-                            ));
-                        });
-                });
-        });
+                            PlayerCardNum,
+                            player_num,
+                        )],
+                    )
+                ]
+            ),
+        ],
+    )
 }
 
 fn update_card_count(
@@ -320,8 +368,8 @@ fn update_card_count(
     }
 }
 
-fn current_card(
-    player: Query<(&Player, &PlayerNum)>,
+fn display_current_card(
+    player: Query<(&CardsInPlay, &PlayerNum)>,
     mut card_image: Query<(&mut ImageNode, &PlayerNum), With<CurrentCardArea>>,
     asset_server: Res<AssetServer>,
 ) {
@@ -334,7 +382,6 @@ fn current_card(
         let (player, _) = player;
         let (mut image, _) = image;
         if let Some(card) = player.cards.first() {
-            println!("{}", image_name(card));
             *image = ImageNode {
                 image: asset_server.load(image_name(card)),
                 ..default()
@@ -343,10 +390,161 @@ fn current_card(
     }
 }
 
+#[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
+enum RoundState {
+    #[default]
+    Begin,
+
+    GameStart,
+
+    Draw,
+    Outcome,
+
+    GameOver,
+}
+
+fn advance_round(
+    keys: Res<ButtonInput<KeyCode>>,
+    state: Res<State<RoundState>>,
+    mut next_state: ResMut<NextState<RoundState>>,
+) {
+    if keys.just_pressed(KeyCode::Space)
+        || (!state.get().eq(&RoundState::GameOver)
+            && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight)))
+    {
+        next_state.set(match state.get() {
+            RoundState::Begin => RoundState::GameStart,
+            RoundState::GameStart => RoundState::Draw,
+            RoundState::Draw => RoundState::Outcome,
+            RoundState::Outcome => RoundState::Draw,
+            RoundState::GameOver => RoundState::GameStart,
+        });
+    }
+}
+
+fn draw(
+    mut player: Query<(&mut Player, &PlayerNum)>,
+    mut cards: Query<(&mut CardsInPlay, &PlayerNum)>,
+) {
+    for player in player
+        .iter_mut()
+        .sort::<&PlayerNum>()
+        .zip(cards.iter_mut().sort::<&PlayerNum>())
+    {
+        let (player, cards) = player;
+        let (mut player, _) = player;
+        let (mut cards, _) = cards;
+        if player.cards.is_empty() {
+            break;
+        }
+        cards.cards.splice(0..0, player.cards.splice(0..1, []));
+    }
+}
+
+fn check_battle(
+    mut player: Query<(&mut Player, &PlayerNum)>,
+    mut cards: Query<(&mut CardsInPlay, &PlayerNum)>,
+    mut pot: Query<&mut Pot>,
+    mut status: Query<&mut TextSpan, With<StatusText>>,
+) -> Result {
+    let mut pot = pot.single_mut()?;
+    let mut status = status.single_mut()?;
+    let mut greatest = 0;
+    let mut winner = 0;
+    let mut is_draw = true;
+    for cards in cards.iter_mut().sort::<&PlayerNum>() {
+        let (mut cards, player_num) = cards;
+        if let Some(card) = cards.cards.first() {
+            if card.2 > greatest {
+                greatest = card.2;
+                winner = player_num.0;
+                is_draw = false;
+            } else if card.2 == greatest {
+                is_draw = true;
+            }
+        }
+        pot.cards.append(&mut cards.cards);
+        cards.cards = Vec::new();
+    }
+    if is_draw {
+        *status = TextSpan(String::from("Draw!"));
+        return Ok(());
+    };
+    *status = TextSpan(format!("Player {} win!", winner));
+    for player in player.iter_mut().sort::<&PlayerNum>() {
+        let (mut player, player_num) = player;
+        if player_num.0 == winner {
+            // shuffle the cards after a battle should allow the game to end sooner and hopefully
+            // not go on forever.
+            let mut rng = rand::rng();
+            pot.cards.shuffle(&mut rng);
+            player.cards.append(&mut pot.cards);
+            pot.cards = Vec::new();
+        }
+    }
+    Ok(())
+}
+
+fn hide_outcome(mut status: Query<&mut TextSpan, With<StatusText>>) -> Result {
+    let mut status = status.single_mut()?;
+
+    *status = TextSpan(String::from(""));
+    Ok(())
+}
+
+fn check_end(mut players: Query<&Player>, mut next_state: ResMut<NextState<RoundState>>) {
+    let zero_card_players = players
+        .iter()
+        .filter(|player| player.cards.is_empty())
+        .collect::<Vec<&Player>>();
+    if zero_card_players.len() >= players.iter().len() - 1 {
+        next_state.set(RoundState::GameOver);
+    }
+}
+
+fn show_winner(
+    players: Query<(&Player, &PlayerNum)>,
+    state: Res<State<RoundState>>,
+    mut next_state: ResMut<NextState<RoundState>>,
+    mut status: Query<&mut TextSpan, With<StatusText>>,
+) -> Result {
+    if !state.get().eq(&RoundState::GameOver) {
+        return Ok(());
+    }
+    let mut status = status.single_mut()?;
+    let zero_card_players = players
+        .iter()
+        .sort_by::<&Player>(|p1, p2| p1.cards.len().cmp(&p2.cards.len()).reverse())
+        .filter(|(player, _)| !player.cards.is_empty())
+        .collect::<Vec<(&Player, &PlayerNum)>>();
+    if let Some((_winner, player_num)) = zero_card_players.first() {
+        *status = TextSpan(format!("Player {} wins! Play again?", player_num.0));
+    }
+    Ok(())
+}
+
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
-        .add_systems(Startup, (init_players, setup_ui))
-        .add_systems(Update, (update_card_count, current_card))
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: String::from("War!"),
+                ..default()
+            }),
+            ..default()
+        }))
+        .add_systems(Startup, (init_players, setup_ui, init_pot))
+        .add_systems(
+            Update,
+            (update_card_count, display_current_card, advance_round),
+        )
+        .add_systems(
+            OnEnter(RoundState::GameStart),
+            (reset_pot, reset_players, reset_cards_in_play),
+        )
+        .add_systems(OnEnter(RoundState::Draw), (hide_outcome, draw))
+        .add_systems(OnEnter(RoundState::Outcome), (check_battle))
+        .add_systems(OnExit(RoundState::Outcome), check_end)
+        .add_systems(OnEnter(RoundState::GameOver), show_winner)
+        .init_state::<RoundState>()
         .run();
 }

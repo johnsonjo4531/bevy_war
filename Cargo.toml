@@ -1,10 +1,10 @@
 [package]
-name = "bevy"
+name = "war"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = "0.15.3"
+bevy = "0.16"
 itertools = "0.14.0"
 log = { version = "*", features = [
   "max_level_debug",
