@@ -1,5 +1,7 @@
 # War Card Game Simulator
 
+![War Simulator](./War-Simulator.gif)
+
 The card game War built in Bevy, press space to move forward through draw and battle phases of a round and shift to fast forward.
 
 ## About the repo
